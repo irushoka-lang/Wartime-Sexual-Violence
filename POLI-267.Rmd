@@ -1,0 +1,353 @@
+---
+title: "Empriical Research Methods: Wartime Sexual Violence Research"
+output: html_document
+date: "2024-11-14"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r cars}
+library("haven")
+library(dplyr)
+library(readr)
+library(ggplot2)
+library(tidyverse)
+library(DescTools)
+library (gmodels)
+library(haven)
+library(lsr)
+
+
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+
+
+```{r pressure, echo=FALSE}
+library(haven)
+data <- read_dta("~/Downloads/Replication Butler etal/file50534_final.dta")
+head(data)
+
+
+
+```
+
+```{r}
+#Dataset of of SV committed by government from 1990 till 2011(Datasource Butler (US Dept States )) (CRSV Score)
+# O: No mention of CRSV 
+# 1: Alleged Reports of Rape 
+# 2: Reports of SV committed by Government Forces
+# 3: Numerous reports of Sexual Violence (Widespread SV) 
+# 4: SV used as a systematic weapon of war. 
+
+SVGS <- read_dta("SVGSFdata_1999-2011.dta")
+
+CRSV <- SVGS %>% 
+  dplyr::select(isoshnm, year, statedeptsvcode) %>% 
+  rename(Country = isoshnm, Year = year ) %>%  
+   group_by(Country) %>%  # Group the data by Country
+   slice_max(order_by = statedeptsvcode, n = 1, with_ties = FALSE) %>% # Select the row with the highest CRSV value for each group, the first occurence in a country
+   ungroup()  
+
+
+
+head(CRSV)
+
+```
+
+
+
+
+```{r load-svac, echo=FALSE}
+#Original SVAC dataset, (for conflict years and first year of conflict years) 
+library(readxl)
+SVAC <- read_excel("SVAC_3.2_complete (1).xlsx")
+head(SVAC)
+
+#Filtering to only have the varaibles with active conflict, have Year conflict ID and Location 
+  filtered_data <- SVAC[SVAC$conflictyear == 1, c( "year", "conflictid","location"), drop = FALSE]
+
+
+  filtered_data
+  
+  
+Pre_Conflict_Year<- filtered_data %>%
+  group_by(location) %>%
+  summarize(first_year_of_conflict = min(year, na.rm = TRUE)) %>% 
+  mutate(Year0 = first_year_of_conflict - 1) %>%  #To identify the preconflict year
+  mutate(location = toupper(location)) %>%  
+  rename( Country = location) %>% 
+   filter(!grepl(",", Country)) %>% #Filtering rows with two countries(So only intrastate countries)
+  mutate(Country = case_when(
+    Country == "BOSNIA-HERZEGOVINA" ~ "BOSNIA AND HERZEGOVINA",
+    Country == "COTE D'IVOIRE" ~ "CÔTE D'IVOIRE",
+     Country == "DEMOCRATIC REPUBLIC OF CONGO (ZAIRE)" ~ "DEMOCRATIC REPUBLIC OF THE CONGO",
+   Country == "IRAN" ~ "IRAN (ISLAMIC REPUBLIC OF)", 
+   Country == "LAOS" ~ "LAO PEOPLE'S DEMOCRATIC REPUBLIC",
+   Country == "MACEDONIA" ~ "NORTH MACEDONIA",
+    Country == "PAPUA NEW GUINEA" ~ "PAPUA",
+   Country == "RUSSIA" ~ "RUSSIAN FEDERATION",
+   Country == "YUGOSLAVIA" ~ "SERBIA",
+   Country == "SYRIA" ~ "SYRIAN ARAB REPUBLIC",
+   Country == "TANZANIA" ~ "UNITED REPUBLIC OF TANZANIA",
+   Country == "VENEZUELA" ~ "VENEZUELA (BOLIVARIAN REPUBLIC OF)",
+    TRUE ~ Country  # Keep all other entries unchanged
+  ))
+
+
+
+#We might need to filter out interstate conflict, because we are looking at Intrastate dynamics. 
+#Another issue is when there are multiple conflicts in one country for example, sli ranka (ceylon)
+Pre_Conflict_Year
+
+```
+
+```{r}
+#Filtering SEV_SV 
+#Variable name (SEV_scalar_agestd_inj_homicide_sexual) From GBD dataset (1980-2019)
+#Log transformed Age-standardized All Risk Factors Summary Exposure Value scalar for Sexual violence    (Log transformed Prevalence of SV) ?? Is that a good assumption? Maybe use an acronym. 
+library(readr)
+SEV_SV <- read_csv("Edited_SEV_scalar_agestd_inj_homicide_sexual.csv")
+head(SEV_SV)
+
+Filtered_Sexual_Violence <- SEV_SV %>%
+  dplyr::select(location_name, covariate_name_short,sex_label, year_id, val) %>%  
+  rename(Country = location_name, Year0 = year_id, sev_sv = val) %>% 
+  mutate(Country= toupper(Country)) %>% 
+  dplyr::select(-c(covariate_name_short)) 
+
+
+Filtered_Sexual_Violence
+
+```
+
+
+
+
+```{r}
+#Combining both datasets: 
+Pre_Conflict_SV <- merge(Pre_Conflict_Year, Filtered_Sexual_Violence , by = c("Country", "Year0"), all.x = TRUE)
+head(Pre_Conflict_SV)
+```
+
+```{r}
+#Now combining of the SVGS dataset, and the pre-conflict_SV
+Final_Data <- merge(CRSV,Pre_Conflict_SV, by= c("Country"), all.x = TRUE) %>%
+  na.omit()
+head(Final_Data)
+
+```
+
+
+```{r}
+#Descriptive_Statitics
+dim(Final_Data) 
+nrow(Final_Data)#Numberofconflicts 
+names(Final_Data)#We'll change and distinguish Year.x and Year.y
+
+```
+```{r}
+# Data descriptives/univariate statistics
+
+summary(Final_Data) #provides summary of ALL variables in data set: minimum, maximum, median, mean, NAs
+summary(Final_Data$statedeptsvcode) #provides summary for variable presvote
+summary(Final_Data$sev_sv)
+Mode(Final_Data$statedeptsvcode)
+Mode(Final_Data$sev_sv) 
+
+```
+> Range of SEV_SV from (0.004907 -1.226277). if we exponentiate it would be a range of 1.00491905904 to 3.408?  How to interpret these exponentiated values?  
+
+```{r}
+
+#Barplot of distribution of Dependent Variable(CRSV) WHICH is an ordinal measure
+Final_Data %>%
+  ggplot(aes(x = statedeptsvcode)) +
+  geom_bar()  
+
+```
+
+> Seems like Level 3 is the most common. 
+
+
+```{r}
+#Histogram of the frequency of SEV_ sexual Violence, Independent Variable which is an interval 
+hist(Final_Data$sev_sv)
+```
+ > Once again do the exponentiated values reflect the true values of sexual Violence prevalence? 
+ 
+```{r}
+#Dispersion:
+#measures of dispersion - suitable for all levels of measurement
+range (Final_Data$sev_sv)
+range (Final_Data$statedeptsvcode) 
+
+#standard deviation for a variable - suitable for interval and ratio level data
+sd(Final_Data$sev_sv) #provides standard deviation for age variable
+
+
+```
+
+
+# BIVARIATE ANALYSIS:  between SEV_SV and CRSV score
+```{r}
+#Anovatest
+
+#One way Analysis of Variance
+aov(statedeptsvcode ~ sev_sv, data = Final_Data)
+
+#creates new object, res.aov (results of the Anova) in order to get summary statistics
+results.aov <-aov(statedeptsvcode ~ sev_sv, data = Final_Data)
+summary(results.aov) #shows F test results, p value.
+aggregate(Final_Data$sev_sv,list(Final_Data$statedeptsvcode),FUN=mean)
+```
+
+Analysis: This anova tests shows that for all the countries that received a CRSV score, what is the mean Sev_sv. As we compare the means we can see that there is no clear gradual increase from CRSV score to CRSV score, hence that countries with gov forces that experience higher scores of CRSV don't necessarily have higher prevalence of SV. We see a sharp increase between Score 0 and 1. Which might suggest that there is a big difference in the preconflict sev_sv of countries that experience no CRSV (score 0) and countries that experience isolated cases/reports of CRSV (score 1) . However it decreases after score 2, which goes against our hypothesis. 
+
+
+#Is the relationshio strong?
+
+```{r}
+
+etaSquared(results.aov) #res.aov is the object created above, the results of the ANOVA test
+
+```
+The eta-squared value being close to 0.01 indicates a small effect size, suggesting a weak relationship of the independent variable on the dependent variable in the context of the analysis. However this might be due to the fact that gender is not controlled. 
+
+
+
+
+
+```{r}
+#ANOVA TEST for just female 
+Final_data1 <- Final_Data %>% 
+  filter(sex_label != "Male") #Do both for female and for male
+
+aov(statedeptsvcode ~ sev_sv, data = Final_data1)
+
+#creates new object, res.aov (results of the Anova) in order to get summary statistics
+results.aov <-aov(statedeptsvcode ~ sev_sv, data = Final_data1)
+summary(results.aov) #shows F test results, p value.
+aggregate(Final_data1$sev_sv,list(Final_data1$statedeptsvcode),FUN=mean)
+```
+
+
+
+There seems to be no  clear positive linear relationship, similar to the previous ANOVA test. However the Preconflict Sexual violence rates are higher when looking at females only.Hence if we were to look at only the women in countries, COuntries that experience CRSV, tend to have higher sev_sv for women.  
+
+#Changing the ordinal scale into a nominal scale 
+
+```{r}
+Final_Data_nominal <- Final_Data %>%
+  mutate(CRSV_nominal = case_when(
+    statedeptsvcode == 0 ~ 0,    # Recode 0 as "no CRSV"
+    statedeptsvcode >= 1 ~ 1        # Recode 1 and higher as "CRSV"
+  ))
+
+Final_Data_nominal
+```
+
+```{r}
+logtest <- glm( CRSV_nominal ~ sev_sv, family = "binomial", data= Final_Data_nominal)
+
+summary(logtest)$coefficients
+
+
+# Load the library
+library(pscl)
+
+# Calculate Pseudo-R² for logistic regression
+pR2(logtest)
+```
+
+log (odds of Statedeptsv) = 2.6289 x -0.6656sev_sv
+```{r}
+exp(-0.6656659)
+
+1- exp(-0.6656659)
+```
+
+So to interpret the coefficients: 
+ for every extra sev_sv, the odds of CRSV to happen are rougly  51.4% as big. Which suggest a decrease by 0.48 in the odds of CRSV (Which suggests a negative relationship between pre conflict sv prevalence and CRSV). 
+ 
+ 
+```{r}
+#Multivariate Analysis: 
+#Logistical regression with two predictors. 
+logtest2 <- glm( CRSV_nominal ~ sev_sv + sex_label, family = "binomial", data= Final_Data_nominal)
+
+summary(logtest2)$coefficients
+pR2(logtest2)
+```
+> Log odds (CRSV) = 3.0624354 -1.2497106sev_sv -0.4618459SexlabelMale 
+> odds (CSRV)= e^(3.0624354 -1.2497106sev_sv -0.4618459SexlabelMale )
+
+```{r}
+exp(-1.2497106)
+1- exp(-1.2497106)
+```
+So to interpret the coefficients: 
+
+ for every extra sev_sv, the odds of CRSV to happen when controlling for sex, is rougly 28.7% as big. Which suggest a decrease by 71.3% in the odds of CRSV (Which suggests an even further negative relationship between pre conflict sv prevalence and CRSV, when taking into account gender). What explains this: Perharps Pre-conflict sexual violence is not. agood indicator to measure the extent of SV. (Maybe has to do with the assumptions we made, just looking into the highest CSRV, or looking at the Sev_sv before one year... ) 
+
+```{r}
+#Multivariate Analysis: 
+#We can use a ordinal Logistic Regression: 
+
+library(MASS)            # Load the package
+  
+  
+```
+
+```{r}
+str(Final_Data$statedeptsvcode)
+
+Final_Data$statedeptsvcode <- factor(Final_Data$statedeptsvcode, 
+                                     levels = c(0, 1, 2, 3, 4), 
+                                     ordered = TRUE)
+```
+
+
+
+```{r}
+model <- polr(statedeptsvcode ~ sev_sv + sex_label, data = Final_Data, method = "logistic")
+
+# Summarize the model
+summary(model)
+```
+
+
+
+
+Using non-partner sexual violence rates. 
+```{r}
+library(readr)
+
+head(SEV_SV)
+
+Filtered_Sexual_Violence <- SEV_SV %>%
+  dplyr::select(location_name, covariate_name_short,sex_label, year_id, val) %>%  
+  rename(Country = location_name, Year = year_id, sev_sv = val) %>% 
+  mutate(Country= toupper(Country)) %>% 
+  dplyr::select(-c(covariate_name_short)) 
+
+
+Filtered_Sexual_Violence
+
+cor(
+  Final_Data$sev_sv,
+  as.numeric(as.character(Final_Data$statedeptsvcode)),
+  method = "pearson",
+  use = "complete.obs"
+)
+
+```
+
+
